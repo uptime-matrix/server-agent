@@ -248,15 +248,30 @@ $POST += "{uptime}$uptime{/uptime}"
 
 # Processes (top processes by CPU and Memory)
 $processes = ""
-Get-Process | Sort-Object -Property CPU -Descending | Select-Object -First 100 | ForEach-Object {
+$totalRAM = $os.TotalVisibleMemorySize * 1024  # Convert to bytes
+
+# Get process performance data for CPU percentage
+$processPerf = @{}
+Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | ForEach-Object {
+    if ($_.IDProcess -ne 0) {
+        $processPerf[$_.IDProcess] = $_.PercentProcessorTime
+    }
+}
+
+Get-Process | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First 100 | ForEach-Object {
     $pid = $_.Id
     $ppid = try { (Get-CimInstance Win32_Process -Filter "ProcessId=$pid").ParentProcessId } catch { 0 }
     $rss = [math]::Round($_.WorkingSet64 / 1KB)
     $vsz = [math]::Round($_.VirtualMemorySize64 / 1KB)
     $user = try { $_.UserName } catch { "SYSTEM" }
     if (-not $user) { $user = "SYSTEM" }
-    $pmem = 0
-    $pcpu = [math]::Round($_.CPU, 2)
+    
+    # Calculate memory percentage
+    $pmem = if ($totalRAM -gt 0) { [math]::Round(($_.WorkingSet64 / $totalRAM) * 100, 2) } else { 0 }
+    
+    # Get CPU percentage from performance counter
+    $pcpu = if ($processPerf.ContainsKey($pid)) { [math]::Round($processPerf[$pid], 2) } else { 0 }
+    
     $comm = $_.ProcessName
     $cmd = $_.Path
     if (-not $cmd) { $cmd = $comm }
