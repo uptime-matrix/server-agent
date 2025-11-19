@@ -5,7 +5,7 @@ Monitor your servers with UptimeMatrix. Cross-platform support for Linux and Win
 ## 🐧 Linux Installation
 
 ```bash
-curl -o install.sh https://raw.githubusercontent.com/UptimeMatrix/ServerAgent/master/install.sh
+curl -o install.sh https://raw.githubusercontent.com/uptime-matrix/server-agent/refs/heads/main/install.sh
 sudo bash install.sh YOUR_SERVER_KEY
 ```
 
@@ -14,7 +14,7 @@ sudo bash install.sh YOUR_SERVER_KEY
 Run PowerShell as Administrator:
 
 ```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/UptimeMatrix/ServerAgent/master/install.ps1" -OutFile "install.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/uptime-matrix/server-agent/refs/heads/main/install.ps1" -OutFile "install.ps1"
 .\install.ps1 YOUR_SERVER_KEY
 ```
 
