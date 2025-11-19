@@ -54,16 +54,29 @@ function Get-PingLatency {
 }
 
 function Get-CPUUsageSnapshot {
-    $cpus = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor
+    # Get CPU performance counters
+    $counters = Get-Counter '\Processor(*)\% User Time','\Processor(*)\% Privileged Time','\Processor(*)\% Idle Time' -ErrorAction SilentlyContinue
     $result = ""
+    
+    # Use WMI as fallback for consistent format
+    $cpus = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor
     foreach ($cpu in $cpus) {
-        $name = $cpu.Name
-        $user = $cpu.PercentUserTime
-        $privileged = $cpu.PercentPrivilegedTime
-        $idle = $cpu.PercentIdleTime
-        $interrupt = $cpu.PercentInterruptTime
-        $dpc = $cpu.PercentDPCTime
-        $result += "$name,$user,$privileged,$idle,$interrupt,$dpc,0,0,0,0,0;"
+        $name = if ($cpu.Name -eq '_Total') { 'cpu' } else { "cpu$($cpu.Name)" }
+        
+        # Map Windows performance data to Linux /proc/stat format:
+        # Format: name,user,nice,system,idle,iowait,irq,softirq,steal,guest,guest_nice
+        $user = [int]$cpu.PercentUserTime
+        $nice = 0  # Windows doesn't have nice
+        $system = [int]$cpu.PercentPrivilegedTime
+        $idle = [int]$cpu.PercentIdleTime
+        $iowait = 0  # Windows doesn't separate IO wait
+        $irq = [int]$cpu.PercentInterruptTime
+        $softirq = [int]$cpu.PercentDPCTime
+        $steal = 0  # Not applicable to Windows
+        $guest = 0  # Not applicable to Windows
+        $guest_nice = 0  # Not applicable to Windows
+        
+        $result += "$name,$user,$nice,$system,$idle,$iowait,$irq,$softirq,$steal,$guest,$guest_nice;"
     }
     return $result.TrimEnd(';')
 }
@@ -133,16 +146,19 @@ $cpu_info_current = Get-CPUUsageSnapshot
 $POST += "{cpu_info_current}$cpu_info_current{/cpu_info_current}"
 
 # Disks
+# Format matches Linux: device,fstype,total_blocks,used_blocks,available_blocks,use%,mounted_on
 $disks = ""
 Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-    $drive = $_.DeviceID
-    $fstype = $_.FileSystem
-    $size = [math]::Round($_.Size / 1KB)
-    $used = [math]::Round(($_.Size - $_.FreeSpace) / 1KB)
-    $free = [math]::Round($_.FreeSpace / 1KB)
-    $usedPercent = if ($_.Size -gt 0) { [math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100) } else { 0 }
-    $mount = $drive
-    $disks += "$drive,$fstype,$size,$used,$free,${usedPercent}%,$mount;"
+    $device = $_.DeviceID
+    $fstype = if ($_.FileSystem) { $_.FileSystem } else { "NTFS" }
+    $total = if ($_.Size) { [math]::Round($_.Size / 1KB) } else { 0 }
+    $available = if ($_.FreeSpace) { [math]::Round($_.FreeSpace / 1KB) } else { 0 }
+    $used = $total - $available
+    $usePercent = if ($total -gt 0) { [math]::Round(($used / $total) * 100) } else { 0 }
+    $mountedOn = $device
+    
+    # Match df output format: device,fstype,total,used,available,use%,mounted
+    $disks += "$device,$fstype,$total,$used,$available,${usePercent}%,$mountedOn;"
 }
 $POST += "{disks}$($disks.TrimEnd(';')){/disks}"
 
