@@ -54,28 +54,31 @@ function Get-PingLatency {
 }
 
 function Get-CPUUsageSnapshot {
-    # Get CPU performance counters
-    $counters = Get-Counter '\Processor(*)\% User Time','\Processor(*)\% Privileged Time','\Processor(*)\% Idle Time' -ErrorAction SilentlyContinue
+    # Use raw performance data (cumulative tick counts) instead of formatted percentages
+    # This matches Linux /proc/stat format where values are cumulative counters
     $result = ""
-    
-    # Use WMI as fallback for consistent format
-    $cpus = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor
+
+    # Get raw CPU performance data (cumulative time in 100-nanosecond units)
+    $cpus = Get-CimInstance Win32_PerfRawData_PerfOS_Processor
     foreach ($cpu in $cpus) {
         $name = if ($cpu.Name -eq '_Total') { 'cpu' } else { "cpu$($cpu.Name)" }
-        
-        # Map Windows performance data to Linux /proc/stat format:
+
+        # Map Windows raw performance data to Linux /proc/stat format:
         # Format: name,user,nice,system,idle,iowait,irq,softirq,steal,guest,guest_nice
-        $user = [int]$cpu.PercentUserTime
-        $nice = 0  # Windows doesn't have nice
-        $system = [int]$cpu.PercentPrivilegedTime
-        $idle = [int]$cpu.PercentIdleTime
+        # Windows provides 100-nanosecond units, we'll use them directly as "ticks" like Linux
+
+        # PercentUserTime is actually cumulative user time (despite the name in raw data)
+        $user = [int64]$cpu.PercentUserTime
+        $nice = 0  # Windows doesn't have nice priority
+        $system = [int64]$cpu.PercentPrivilegedTime
+        $idle = [int64]$cpu.PercentIdleTime
         $iowait = 0  # Windows doesn't separate IO wait
-        $irq = [int]$cpu.PercentInterruptTime
-        $softirq = [int]$cpu.PercentDPCTime
-        $steal = 0  # Not applicable to Windows
+        $irq = [int64]$cpu.PercentInterruptTime
+        $softirq = [int64]$cpu.PercentDPCTime
+        $steal = 0  # Not applicable to Windows (virtualization overhead)
         $guest = 0  # Not applicable to Windows
         $guest_nice = 0  # Not applicable to Windows
-        
+
         $result += "$name,$user,$nice,$system,$idle,$iowait,$irq,$softirq,$steal,$guest,$guest_nice;"
     }
     return $result.TrimEnd(';')
@@ -146,18 +149,19 @@ $cpu_info_current = Get-CPUUsageSnapshot
 $POST += "{cpu_info_current}$cpu_info_current{/cpu_info_current}"
 
 # Disks
-# Format matches Linux: device,fstype,total_blocks,used_blocks,available_blocks,use%,mounted_on
+# Format matches Linux df -P -T -B 1k: device,fstype,total_blocks,used_blocks,available_blocks,use%,mounted_on
 $disks = ""
 Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
     $device = $_.DeviceID
     $fstype = if ($_.FileSystem) { $_.FileSystem } else { "NTFS" }
-    $total = if ($_.Size) { [math]::Round($_.Size / 1KB) } else { 0 }
-    $available = if ($_.FreeSpace) { [math]::Round($_.FreeSpace / 1KB) } else { 0 }
+    # Convert to KB (1024 bytes) to match Linux df -B 1k
+    $total = if ($_.Size) { [math]::Floor($_.Size / 1024) } else { 0 }
+    $available = if ($_.FreeSpace) { [math]::Floor($_.FreeSpace / 1024) } else { 0 }
     $used = $total - $available
-    $usePercent = if ($total -gt 0) { [math]::Round(($used / $total) * 100) } else { 0 }
+    $usePercent = if ($total -gt 0) { [math]::Floor(($used / $total) * 100) } else { 0 }
     $mountedOn = $device
-    
-    # Match df output format: device,fstype,total,used,available,use%,mounted
+
+    # Match Linux df output format exactly: device,fstype,total,used,available,use%,mounted
     $disks += "$device,$fstype,$total,$used,$available,${usePercent}%,$mountedOn;"
 }
 $POST += "{disks}$($disks.TrimEnd(';')){/disks}"
